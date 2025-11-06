@@ -22,6 +22,7 @@ func NewTextArea() textarea.Model {
 	nt.Placeholder = "write the content here"
 	nt.Focus()
 	nt.ShowLineNumbers = false
+	nt.Placeholder = "Type your notes...."
 	nt.Cursor.Style = styles.CursorStyle
 	return nt
 }

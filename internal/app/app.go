@@ -2,6 +2,7 @@ package app
 
 // models of BubbleTea
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -16,6 +17,9 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/joho/godotenv"
+	"google.golang.org/genai"
 )
 
 var NotesDir string
@@ -26,6 +30,9 @@ func init() {
 		log.Fatal("Error getting home dir", err)
 	}
 	NotesDir = fmt.Sprintf("%s/.totion", homedir)
+	if err := godotenv.Load(); err != nil {
+		log.Printf("Warning : error in getting the api-key : %v", err)
+	}
 }
 
 type Model struct {
@@ -36,10 +43,39 @@ type Model struct {
 	List                   list.Model
 	ListVisible            bool
 	ErrMsg                 string
+	Ctx                    context.Context
+	Client                 *genai.Client
+	Suggestion             string
+	AutoCompleteEnabled    bool
 }
 
 func (m Model) Init() tea.Cmd {
 	return nil
+}
+
+type suggestionMsg struct {
+	suggestion string
+	err        error
+}
+
+func (m *Model) generateSuggestionCmd() tea.Cmd {
+	return func() tea.Msg {
+		if m.Client == nil {
+			return suggestionMsg{"", fmt.Errorf("AI client not available")}
+		}
+		temp := float32(0.9)
+		prompt := fmt.Sprintf(SystemPrompt, m.NoteContent.Value())
+		resp, err := m.Client.Models.GenerateContent(m.Ctx, GenaiModel, genai.Text(prompt), &genai.GenerateContentConfig{Temperature: &temp})
+		if err != nil {
+			return suggestionMsg{"", err}
+		}
+		if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
+			return suggestionMsg{"", fmt.Errorf("no suggestion generated")}
+		}
+		sugg := resp.Text()
+		// Truncate to a reasonable length, e.g., first 100 chars or until next period
+		return suggestionMsg{sugg, nil}
+	}
 }
 
 func (m *Model) OpenOrCreateFile(filePath string) error {
@@ -102,6 +138,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 
+	case suggestionMsg:
+		if msg.err != nil {
+			m.ErrMsg = fmt.Sprintf("Suggestion error: %v", msg.err)
+			m.Suggestion = ""
+		} else {
+			m.Suggestion = msg.suggestion
+			m.ErrMsg = ""
+		}
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		h, v := styles.DocStyle.GetFrameSize()
 		contentWidth := msg.Width - h
@@ -114,6 +160,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch msg.String() {
+		case "ctrl+t":
+			if m.CurrentNote != nil {
+				m.AutoCompleteEnabled = !m.AutoCompleteEnabled
+				if !m.AutoCompleteEnabled {
+					m.Suggestion = ""
+				}
+				m.ErrMsg = fmt.Sprintf("Autocomplete %s", map[bool]string{true: "enabled", false: "disabled"}[m.AutoCompleteEnabled])
+				return m, nil
+			}
+
+		case "tab":
+			if m.CurrentNote != nil && m.AutoCompleteEnabled && m.Suggestion != "" {
+				current := m.NoteContent.Value()
+				m.NoteContent.SetValue(current + " " + m.Suggestion)
+				m.Suggestion = ""
+				return m, nil
+			}
+
 		case "ctrl+l":
 			if !m.ListVisible {
 				m.ListVisible = true
@@ -204,6 +268,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
+		case " ":
+			if m.Suggestion != "" {
+				break
+			}
+			if m.CurrentNote != nil && m.AutoCompleteEnabled {
+				return m, m.generateSuggestionCmd()
+			}
+		case "ctrl+g":
+			if m.CurrentNote != nil && m.AutoCompleteEnabled {
+				return m, m.generateSuggestionCmd()
+			}
 		case "ctrl+s":
 			m.SaveNote()
 			return m, nil
@@ -239,6 +314,11 @@ func (m Model) View() string {
 		help = GeneralHelp
 	} else if m.CurrentNote != nil {
 		view = m.NoteContent.View()
+		if m.AutoCompleteEnabled && m.Suggestion != "" {
+			suggStyle := styles.DocStyle.Italic(true).Foreground(lipgloss.Color("#f1e588ff"))
+			m.Suggestion = suggStyle.Render(m.Suggestion)
+			view += fmt.Sprintf("\nSuggestion: %s (Tab to accept)\n", m.Suggestion)
+		}
 		help = SaveHelp
 	} else if m.ListVisible {
 		if len(m.List.Items()) == 0 {
@@ -256,7 +336,22 @@ func (m Model) View() string {
 	totionView := styles.TotionLogostyle.Render(asciiArt)
 	description := styles.DescriptionStyle.Render("Your personal note-taking companion • Create, edit, and manage your notes with ease using Terminal.")
 
-	return fmt.Sprintf("%s\n%s%s\n%s\n\n%s\n\n%s", welcome, errView, totionView, description, view, help)
+	autocompleteStatus := ""
+	if m.CurrentNote != nil {
+		status := "off"
+		if m.AutoCompleteEnabled {
+			status = "on"
+		}
+		var nextSuggestion string
+		if m.AutoCompleteEnabled {
+			nextSuggestion = "Ctrl+G: Get the next suggestion"
+		} else {
+			nextSuggestion = ""
+		}
+		autocompleteStatus = fmt.Sprintf(" [Autocomplete: %s - Ctrl+T to toggle]\n %s", status, nextSuggestion)
+	}
+
+	return fmt.Sprintf("%s\n%s%s%s\n%s\n\n%s\n\n%s", welcome, errView, totionView, autocompleteStatus, description, view, help)
 }
 
 func InitialModel() Model {
@@ -268,6 +363,23 @@ func InitialModel() Model {
 	finallist.Title = "All Notes 📒"
 	finallist.Styles.Title = styles.ListTitleStyle
 
+	api_key := os.Getenv("GEMINI_API_KEY")
+	var client *genai.Client
+	if api_key != "" {
+		ctx := context.Background()
+		var err error
+		client, err = genai.NewClient(ctx, &genai.ClientConfig{
+			APIKey:  api_key,
+			Backend: genai.BackendGeminiAPI,
+		})
+		if err != nil {
+			log.Printf("Failed to initialise the gemini client: %v", err)
+			client = nil
+		}
+	} else {
+		log.Printf("Api key is not set, AI Suggestion is disabled.")
+	}
+
 	return Model{
 		NewFileInput:           ti,
 		CreateFileInputVisible: false,
@@ -275,5 +387,9 @@ func InitialModel() Model {
 		List:                   finallist,
 		ListVisible:            false,
 		ErrMsg:                 "",
+		Ctx:                    context.Background(),
+		Client:                 client,
+		Suggestion:             "",
+		AutoCompleteEnabled:    false,
 	}
 }

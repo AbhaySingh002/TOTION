@@ -47,6 +47,8 @@ type Model struct {
 	Client                 *genai.Client
 	Suggestion             string
 	AutoCompleteEnabled    bool
+	Width                  int
+	Height                 int
 }
 
 func (m Model) Init() tea.Cmd {
@@ -149,6 +151,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.WindowSizeMsg:
+		m.Width = msg.Width
+		m.Height = msg.Height
 		h, v := styles.DocStyle.GetFrameSize()
 		contentWidth := msg.Width - h
 		contentHeight := msg.Height - v - 10
@@ -300,9 +304,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
+	// Calculate available width for text wrapping
+	h, _ := styles.DocStyle.GetFrameSize()
+	availableWidth := m.Width - h
+	if availableWidth < 40 {
+		availableWidth = 40 // Minimum width
+	}
+
 	errView := ""
 	if m.ErrMsg != "" {
-		errStyle := styles.DocStyle.Foreground(styles.CursorStyle.GetForeground()).Bold(true).Margin(0, 0, 1, 0)
+		errStyle := styles.DocStyle.Foreground(styles.CursorStyle.GetForeground()).Bold(true).Margin(0, 0, 1, 0).Width(availableWidth)
 		errView = errStyle.Render(m.ErrMsg) + "\n"
 	}
 
@@ -315,9 +326,11 @@ func (m Model) View() string {
 	} else if m.CurrentNote != nil {
 		view = m.NoteContent.View()
 		if m.AutoCompleteEnabled && m.Suggestion != "" {
-			suggStyle := styles.DocStyle.Italic(true).Foreground(lipgloss.Color("#f1e588ff"))
-			m.Suggestion = suggStyle.Render(m.Suggestion)
-			view += fmt.Sprintf("\nSuggestion: %s (Tab to accept)\n", m.Suggestion)
+			suggStyle := lipgloss.NewStyle().Italic(true).Foreground(lipgloss.Color("#f1e588ff"))
+			suggestionText := suggStyle.Render(m.Suggestion)
+			suggestionLineStyle := lipgloss.NewStyle().Width(availableWidth)
+			suggestionLine := suggestionLineStyle.Render(fmt.Sprintf("Suggestion: %s (Tab to accept)", suggestionText))
+			view += "\n" + suggestionLine + "\n"
 		}
 		help = SaveHelp
 	} else if m.ListVisible {
@@ -331,10 +344,10 @@ func (m Model) View() string {
 		view = "No note open. Press Ctrl+N to create one or Ctrl+L to list existing notes."
 	}
 
-	welcome := styles.WelcomeStyle.Render("Welcome to the TOTION 🧠")
+	welcome := styles.WelcomeStyle.Width(availableWidth).Render("Welcome to the TOTION 🧠")
 	asciiArt := AsciiArt // defined in the data.go
-	totionView := styles.TotionLogostyle.Render(asciiArt)
-	description := styles.DescriptionStyle.Render("Your personal note-taking companion • Create, edit, and manage your notes with ease using Terminal.")
+	totionView := styles.TotionLogostyle.Width(availableWidth).Render(asciiArt)
+	description := styles.DescriptionStyle.Width(availableWidth).Render("Your personal note-taking companion • Create, edit, and manage your notes with ease using Terminal.")
 
 	autocompleteStatus := ""
 	if m.CurrentNote != nil {
@@ -348,7 +361,12 @@ func (m Model) View() string {
 		} else {
 			nextSuggestion = ""
 		}
-		autocompleteStatus = fmt.Sprintf(" [Autocomplete: %s - Ctrl+T to toggle]\n %s", status, nextSuggestion)
+		statusText := fmt.Sprintf("[Autocomplete: %s - Ctrl+T to toggle]", status)
+		if nextSuggestion != "" {
+			statusText += "\n" + nextSuggestion
+		}
+		autocompleteStatusStyle := lipgloss.NewStyle().Width(availableWidth).Align(lipgloss.Right)
+		autocompleteStatus = "\n" + autocompleteStatusStyle.Render(statusText)
 	}
 
 	return fmt.Sprintf("%s\n%s%s%s\n%s\n\n%s\n\n%s", welcome, errView, totionView, autocompleteStatus, description, view, help)
@@ -391,5 +409,7 @@ func InitialModel() Model {
 		Client:                 client,
 		Suggestion:             "",
 		AutoCompleteEnabled:    false,
+		Width:                  80,
+		Height:                 24,
 	}
 }

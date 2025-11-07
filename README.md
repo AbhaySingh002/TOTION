@@ -27,7 +27,7 @@ A beautiful terminal-based note-taking application built with Go and [Bubble Tea
 git clone https://github.com/AbhaySingh002/Totion.git
 cd Totion
 ```
-
+• set the api_key in the ./internal/app/data.go
 2. Build the application:
 ```bash
 make build

@@ -18,7 +18,6 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/joho/godotenv"
 	"google.golang.org/genai"
 )
 
@@ -30,9 +29,6 @@ func init() {
 		log.Fatal("Error getting home dir", err)
 	}
 	NotesDir = fmt.Sprintf("%s/.totion", homedir)
-	if err := godotenv.Load(); err != nil {
-		log.Printf("Warning : error in getting the api-key : %v", err)
-	}
 }
 
 type Model struct {
@@ -381,13 +377,13 @@ func InitialModel() Model {
 	finallist.Title = "All Notes 📒"
 	finallist.Styles.Title = styles.ListTitleStyle
 
-	api_key := os.Getenv("GEMINI_API_KEY")
+
 	var client *genai.Client
-	if api_key != "" {
+	if Api_key != "" {
 		ctx := context.Background()
 		var err error
 		client, err = genai.NewClient(ctx, &genai.ClientConfig{
-			APIKey:  api_key,
+			APIKey:  Api_key,
 			Backend: genai.BackendGeminiAPI,
 		})
 		if err != nil {

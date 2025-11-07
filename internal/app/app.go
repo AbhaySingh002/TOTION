@@ -344,7 +344,7 @@ func (m Model) View() string {
 		view = "No note open. Press Ctrl+N to create one or Ctrl+L to list existing notes."
 	}
 
-	welcome := styles.WelcomeStyle.Width(availableWidth).Render("Welcome to the TOTION 🧠")
+	welcome := styles.WelcomeStyle.Render("Welcome to the TOTION 🧠")
 	asciiArt := AsciiArt // defined in the data.go
 	totionView := styles.TotionLogostyle.Width(availableWidth).Render(asciiArt)
 	description := styles.DescriptionStyle.Width(availableWidth).Render("Your personal note-taking companion • Create, edit, and manage your notes with ease using Terminal.")

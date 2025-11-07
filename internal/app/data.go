@@ -19,4 +19,4 @@ Note:
 %s
 Continuation:"`
 const GenaiModel = "gemini-2.5-flash-lite"
-const Api_key = "AIzaSyAo_Kp8-n7ahtZP6QaXuqDKwLrmtuaK240"
+const Api_key = "GEMINI-API-KEY"

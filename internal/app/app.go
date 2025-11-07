@@ -1,5 +1,4 @@
 package app
-
 // models of BubbleTea
 import (
 	"context"
@@ -8,11 +7,11 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/AbhaySingh002/Totion/internal/file"
 	"github.com/AbhaySingh002/Totion/internal/styles"
 	"github.com/AbhaySingh002/Totion/internal/tui"
-
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -31,20 +30,30 @@ func init() {
 	NotesDir = fmt.Sprintf("%s/.totion", homedir)
 }
 
+type tickMsg struct{}
+
+func tickCmd() tea.Cmd {
+	return tea.Tick(time.Second, func(t time.Time) tea.Msg {
+		return tickMsg{}
+	})
+}
+
 type Model struct {
-	NewFileInput           textinput.Model
-	CreateFileInputVisible bool
-	CurrentNote            *os.File
-	NoteContent            textarea.Model
-	List                   list.Model
-	ListVisible            bool
-	ErrMsg                 string
-	Ctx                    context.Context
-	Client                 *genai.Client
-	Suggestion             string
-	AutoCompleteEnabled    bool
-	Width                  int
-	Height                 int
+	NewFileInput          	textinput.Model
+	CreateFileInputVisible 	bool
+	CurrentNote           	*os.File
+	NoteContent           	textarea.Model
+	List                  	list.Model
+	ListVisible            	bool
+	ErrMsg                 	string
+	Ctx                    	context.Context
+	Client                 	*genai.Client
+	Suggestion             	string
+	AutoCompleteEnabled    	bool
+	Width                  	int
+	Height                 	int
+	SuggesTimeCount        	int
+	PrevNoteLength         	int
 }
 
 func (m Model) Init() tea.Cmd {
@@ -90,7 +99,6 @@ func (m *Model) OpenOrCreateFile(filePath string) error {
 	if err != nil {
 		return err
 	}
-
 	content, err := io.ReadAll(f)
 	if err != nil {
 		f.Close()
@@ -100,9 +108,10 @@ func (m *Model) OpenOrCreateFile(filePath string) error {
 		f.Close()
 		return err
 	}
-
 	m.CurrentNote = f
 	m.NoteContent.SetValue(string(content))
+	m.SuggesTimeCount = 0
+	m.PrevNoteLength = len(m.NoteContent.Value())
 	m.ErrMsg = ""
 	return nil
 }
@@ -135,7 +144,17 @@ func (m *Model) SaveNote() {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
-
+	case tickMsg:
+		if m.CurrentNote == nil || !m.AutoCompleteEnabled {
+			return m, nil
+		}
+		m.SuggesTimeCount++
+		var cmds []tea.Cmd
+		if m.SuggesTimeCount == 3 {
+			cmds = append(cmds, m.generateSuggestionCmd())
+		}
+		cmds = append(cmds, tickCmd())
+		return m, tea.Batch(cmds...)
 	case suggestionMsg:
 		if msg.err != nil {
 			m.ErrMsg = fmt.Sprintf("Suggestion error: %v", msg.err)
@@ -145,7 +164,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ErrMsg = ""
 		}
 		return m, nil
-
 	case tea.WindowSizeMsg:
 		m.Width = msg.Width
 		m.Height = msg.Height
@@ -157,19 +175,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.NoteContent.SetHeight(contentHeight)
 		m.NewFileInput.Width = contentWidth
 		return m, nil
-
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+t":
 			if m.CurrentNote != nil {
+				oldEnabled := m.AutoCompleteEnabled
 				m.AutoCompleteEnabled = !m.AutoCompleteEnabled
 				if !m.AutoCompleteEnabled {
 					m.Suggestion = ""
+				} else {
+					m.SuggesTimeCount = 0
+					m.PrevNoteLength = len(m.NoteContent.Value())
 				}
 				m.ErrMsg = fmt.Sprintf("Autocomplete %s", map[bool]string{true: "enabled", false: "disabled"}[m.AutoCompleteEnabled])
+				if m.AutoCompleteEnabled && !oldEnabled {
+					return m, tickCmd()
+				}
 				return m, nil
 			}
-
 		case "tab":
 			if m.CurrentNote != nil && m.AutoCompleteEnabled && m.Suggestion != "" {
 				current := m.NoteContent.Value()
@@ -177,7 +200,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.Suggestion = ""
 				return m, nil
 			}
-
 		case "ctrl+l":
 			if !m.ListVisible {
 				m.ListVisible = true
@@ -189,7 +211,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.ErrMsg = ""
 				return m, nil
 			}
-
 		case "delete", "backspace":
 			if m.ListVisible {
 				item, ok := m.List.SelectedItem().(file.Note)
@@ -206,7 +227,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-
 		case "esc":
 			if m.CreateFileInputVisible {
 				m.CreateFileInputVisible = false
@@ -250,6 +270,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.ErrMsg = fmt.Sprintf("Error opening file: %v", err)
 					} else {
 						m.ListVisible = false
+						var initCmd tea.Cmd
+						if m.AutoCompleteEnabled {
+							initCmd = tickCmd()
+						}
+						return m, initCmd
 					}
 				} else {
 					m.ErrMsg = "No item selected. Use arrow keys to select a note."
@@ -264,17 +289,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					m.CreateFileInputVisible = false
 					m.NewFileInput.SetValue("")
+					var initCmd tea.Cmd
+					if m.AutoCompleteEnabled {
+						initCmd = tickCmd()
+					}
+					return m, initCmd
 				}
 			}
 			return m, nil
-
-		case " ":
-			if m.Suggestion != "" {
-				break
-			}
-			if m.CurrentNote != nil && m.AutoCompleteEnabled {
-				return m, m.generateSuggestionCmd()
-			}
 		case "ctrl+g":
 			if m.CurrentNote != nil && m.AutoCompleteEnabled {
 				return m, m.generateSuggestionCmd()
@@ -288,34 +310,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.List, cmd = m.List.Update(msg)
 		return m, cmd
 	}
-
 	if m.CreateFileInputVisible {
 		m.NewFileInput, cmd = m.NewFileInput.Update(msg)
 	}
-
 	if m.CurrentNote != nil {
 		m.NoteContent, cmd = m.NoteContent.Update(msg)
+		currentLen := len(m.NoteContent.Value())
+		if currentLen != m.PrevNoteLength {
+			m.SuggesTimeCount = 0
+			m.Suggestion = ""
+		}
+		m.PrevNoteLength = currentLen
 	}
 	return m, cmd
 }
 
 func (m Model) View() string {
-	// Calculate available width for text wrapping
+	// available width for text wrapping
 	h, _ := styles.DocStyle.GetFrameSize()
 	availableWidth := m.Width - h
 	if availableWidth < 40 {
-		availableWidth = 40 // Minimum width
+		availableWidth = 40 
 	}
-
 	errView := ""
 	if m.ErrMsg != "" {
 		errStyle := styles.DocStyle.Foreground(styles.CursorStyle.GetForeground()).Bold(true).Margin(0, 0, 1, 0).Width(availableWidth)
 		errView = errStyle.Render(m.ErrMsg) + "\n"
 	}
-
 	var view string
-	var help string = GeneralHelp // Default to GeneralHelp
-
+	var help string = GeneralHelp // Default GeneralHelp
 	if m.CreateFileInputVisible {
 		view = m.NewFileInput.View()
 		help = GeneralHelp
@@ -339,12 +362,10 @@ func (m Model) View() string {
 	} else {
 		view = "No note open. Press Ctrl+N to create one or Ctrl+L to list existing notes."
 	}
-
 	welcome := styles.WelcomeStyle.Render("Welcome to the TOTION 🧠")
 	asciiArt := AsciiArt // defined in the data.go
 	totionView := styles.TotionLogostyle.Width(availableWidth).Render(asciiArt)
 	description := styles.DescriptionStyle.Width(availableWidth).Render("Your personal note-taking companion • Create, edit, and manage your notes with ease using Terminal.")
-
 	autocompleteStatus := ""
 	if m.CurrentNote != nil {
 		status := "off"
@@ -364,20 +385,16 @@ func (m Model) View() string {
 		autocompleteStatusStyle := lipgloss.NewStyle().Width(availableWidth).Align(lipgloss.Right)
 		autocompleteStatus = "\n" + autocompleteStatusStyle.Render(statusText)
 	}
-
 	return fmt.Sprintf("%s\n%s%s%s\n%s\n\n%s\n\n%s", welcome, errView, totionView, autocompleteStatus, description, view, help)
 }
 
 func InitialModel() Model {
-
 	ti := tui.NewTextInput()
 	nt := tui.NewTextArea()
 	noteList := file.NotesFiles(NotesDir)
 	finallist := list.New(noteList, list.NewDefaultDelegate(), 0, 0)
 	finallist.Title = "All Notes 📒"
 	finallist.Styles.Title = styles.ListTitleStyle
-
-
 	var client *genai.Client
 	if Api_key != "" {
 		ctx := context.Background()
@@ -393,19 +410,20 @@ func InitialModel() Model {
 	} else {
 		log.Printf("Api key is not set, AI Suggestion is disabled.")
 	}
-
 	return Model{
-		NewFileInput:           ti,
+		NewFileInput:          ti,
 		CreateFileInputVisible: false,
-		NoteContent:            nt,
-		List:                   finallist,
-		ListVisible:            false,
-		ErrMsg:                 "",
-		Ctx:                    context.Background(),
-		Client:                 client,
-		Suggestion:             "",
-		AutoCompleteEnabled:    false,
-		Width:                  80,
-		Height:                 24,
+		NoteContent:           nt,
+		List:                  finallist,
+		ListVisible:           false,
+		ErrMsg:                "",
+		Ctx:                   context.Background(),
+		Client:                client,
+		Suggestion:            "",
+		AutoCompleteEnabled:   false,
+		Width:                 80,
+		Height:                24,
+		SuggesTimeCount:       0,
+		PrevNoteLength:        0,
 	}
 }

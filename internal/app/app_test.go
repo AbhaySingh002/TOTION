@@ -322,6 +322,9 @@ func TestModel_Update(t *testing.T) {
 }
 
 func TestModel_generateSuggestionCmd(t *testing.T) {
+	tmpDir := setupTestNotesDir(t)
+	defer os.RemoveAll(tmpDir)
+	
 	t.Run("nil client", func(t *testing.T) {
 		model := InitialModel()
 		model.Client = nil

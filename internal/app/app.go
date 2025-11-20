@@ -1,4 +1,5 @@
 package app
+
 // models of BubbleTea
 import (
 	"context"
@@ -40,10 +41,10 @@ func tickCmd() tea.Cmd {
 
 type Model struct {
 	NewFileInput          	textinput.Model
-	CreateFileInputVisible 	bool
-	CurrentNote           	*os.File
-	NoteContent           	textarea.Model
-	List                  	list.Model
+	CreateFileInputVisible	bool
+	CurrentNote            	*os.File
+	NoteContent            	textarea.Model
+	List                   	list.Model
 	ListVisible            	bool
 	ErrMsg                 	string
 	Ctx                    	context.Context
@@ -57,7 +58,7 @@ type Model struct {
 }
 
 func (m Model) Init() tea.Cmd {
-	return nil
+	return tea.EnableMouseCellMotion
 }
 
 type suggestionMsg struct {
@@ -330,7 +331,7 @@ func (m Model) View() string {
 	h, _ := styles.DocStyle.GetFrameSize()
 	availableWidth := m.Width - h
 	if availableWidth < 40 {
-		availableWidth = 40 
+		availableWidth = 40
 	}
 	errView := ""
 	if m.ErrMsg != "" {
@@ -411,19 +412,19 @@ func InitialModel() Model {
 		log.Printf("Api key is not set, AI Suggestion is disabled.")
 	}
 	return Model{
-		NewFileInput:          ti,
+		NewFileInput:          	ti,
 		CreateFileInputVisible: false,
-		NoteContent:           nt,
-		List:                  finallist,
-		ListVisible:           false,
-		ErrMsg:                "",
-		Ctx:                   context.Background(),
-		Client:                client,
-		Suggestion:            "",
-		AutoCompleteEnabled:   false,
-		Width:                 80,
-		Height:                24,
-		SuggesTimeCount:       0,
-		PrevNoteLength:        0,
+		NoteContent:           	nt,
+		List:                   finallist,
+		ListVisible:            false,
+		ErrMsg:                 "",
+		Ctx:                    context.Background(),
+		Client:                 client,
+		Suggestion:             "",
+		AutoCompleteEnabled:    false,
+		Width:                  80,
+		Height:                 24,
+		SuggesTimeCount:        0,
+		PrevNoteLength:         0,
 	}
 }
